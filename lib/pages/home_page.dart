@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/user.dart';
 import '../services/auth_service.dart';
+import '../services/run_service.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({Key? key}) : super(key: key);
@@ -48,6 +49,7 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Existing Buttons
             ElevatedButton(
               onPressed: () {
                 Navigator.pushNamed(context, '/waiting_room');
@@ -61,10 +63,40 @@ class _HomePageState extends State<HomePage> {
               },
               child: const Text('View Challenges'),
             ),
+
+            const SizedBox(height: 32),
+            // NEW: Start Run Button
+            ElevatedButton(
+              onPressed: () async {
+                // 1) Insert a new row in user_contributions (start run).
+                //    We'll do this via a function call in a new service or inline.
+                final user = Provider.of<UserModel>(context, listen: false);
+                final userId = user.id;
+
+                // Optionally you might have a "teamChallengeId", or for now, let's pass 0 or something.
+                final startContributionId = await startNewRunInDatabase(userId);
+
+                if (startContributionId != null) {
+                  // 2) Navigate to ActiveRunPage with that new userContributionId
+                  Navigator.pushNamed(
+                    context,
+                    '/active_run',
+                    arguments: startContributionId,
+                  );
+                } else {
+                  // Handle error
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Failed to start run.'))
+                  );
+                }
+              },
+              child: const Text('Start Run'),
+            ),
           ],
         ),
       ),
     );
   }
+
 
 }
