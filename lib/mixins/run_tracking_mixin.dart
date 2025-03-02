@@ -38,6 +38,8 @@ mixin RunTrackingMixin<T extends StatefulWidget> on State<T> {
 
   /// Start run: initialize all variables and start timers & location tracking.
   void startRun(Position initialPosition) {
+    print('Starting run with initial position: ${initialPosition.latitude}, ${initialPosition.longitude}');
+
     setState(() {
       startLocation = initialPosition;
       isTracking = true;
@@ -52,50 +54,79 @@ mixin RunTrackingMixin<T extends StatefulWidget> on State<T> {
       lastRecordedLocation = startPoint;
     });
 
-    // Start a timer to count seconds
+    // Start a timer to count seconds - use a more reliable timer approach
     runTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!autoPaused && mounted) {
-        setState(() => secondsElapsed++);
+      if (mounted) {
+        setState(() {
+          if (!autoPaused) {
+            secondsElapsed++;
+          }
+          // Debug timer to verify it's working
+          print('Timer tick: $secondsElapsed seconds');
+        });
       }
     });
 
-    // Subscribe to location updates
-    locationSubscription = locationService.trackLocation().listen((position) {
-      if (!isTracking) return;
+    // Improve location subscription for iOS
+    locationSubscription = locationService.trackLocation().listen(
+          (position) {
+        if (!isTracking || !mounted) return;
 
-      // Update auto-pause logic
-      final speed = position.speed.clamp(0.0, double.infinity);
-      _handleAutoPauseLogic(speed);
+        print('New position: ${position.latitude}, ${position.longitude}, accuracy: ${position.accuracy}m, speed: ${position.speed}m/s');
 
-      // Calculate distance if not auto-paused
-      if (lastRecordedLocation != null && !autoPaused) {
-        final newDistance = calculateDistance(
-          lastRecordedLocation!.latitude,
-          lastRecordedLocation!.longitude,
-          position.latitude,
-          position.longitude,
-        );
-        if (newDistance > 20.0) {
-          setState(() {
-            distanceCovered += newDistance;
-            lastRecordedLocation = LatLng(position.latitude, position.longitude);
-          });
+        // Only use location updates with good accuracy for iOS
+        if (position.accuracy > 20) {
+          print('Skipping low accuracy position update');
+          return;
         }
-      }
 
-      // Update route points and current location
-      setState(() {
-        currentLocation = position;
-        final newPoint = LatLng(position.latitude, position.longitude);
-        routePoints.add(newPoint);
-        routePolyline = routePolyline.copyWith(pointsParam: routePoints);
-      });
+        // Update auto-pause logic
+        final speed = position.speed.clamp(0.0, double.infinity);
+        _handleAutoPauseLogic(speed);
 
-      // Optionally animate the map camera
-      mapController?.animateCamera(
-        CameraUpdate.newLatLng(LatLng(position.latitude, position.longitude)),
-      );
-    });
+        // Calculate distance if not auto-paused
+        if (lastRecordedLocation != null && !autoPaused) {
+          final newDistance = calculateDistance(
+            lastRecordedLocation!.latitude,
+            lastRecordedLocation!.longitude,
+            position.latitude,
+            position.longitude,
+          );
+
+          // Only update if the change is reasonable (avoid GPS jumps)
+          if (newDistance > 1.0 && newDistance < 50.0) {
+            setState(() {
+              distanceCovered += newDistance;
+              print('Distance updated: $distanceCovered meters');
+              lastRecordedLocation = LatLng(position.latitude, position.longitude);
+            });
+          }
+        } else if (lastRecordedLocation == null) {
+          lastRecordedLocation = LatLng(position.latitude, position.longitude);
+        }
+
+        // Update route points and current location
+        setState(() {
+          currentLocation = position;
+          final newPoint = LatLng(position.latitude, position.longitude);
+          routePoints.add(newPoint);
+          routePolyline = routePolyline.copyWith(pointsParam: routePoints);
+        });
+
+        // Animate the map camera with padding for better visibility
+        mapController?.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: LatLng(position.latitude, position.longitude),
+              zoom: 16,
+            ),
+          ),
+        );
+      },
+      onError: (error) {
+        print('Location stream error: $error');
+      },
+    );
   }
 
   /// Stop the run and cancel timers/subscriptions.
