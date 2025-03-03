@@ -38,8 +38,6 @@ mixin RunTrackingMixin<T extends StatefulWidget> on State<T> {
 
   /// Start run: initialize all variables and start timers & location tracking.
   void startRun(Position initialPosition) {
-    print('Starting run with initial position: ${initialPosition.latitude}, ${initialPosition.longitude}');
-
     setState(() {
       startLocation = initialPosition;
       isTracking = true;
@@ -54,79 +52,50 @@ mixin RunTrackingMixin<T extends StatefulWidget> on State<T> {
       lastRecordedLocation = startPoint;
     });
 
-    // Start a timer to count seconds - use a more reliable timer approach
+    // Start a timer to count seconds
     runTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (mounted) {
-        setState(() {
-          if (!autoPaused) {
-            secondsElapsed++;
-          }
-          // Debug timer to verify it's working
-          print('Timer tick: $secondsElapsed seconds');
-        });
+      if (!autoPaused && mounted) {
+        setState(() => secondsElapsed++);
       }
     });
 
-    // Improve location subscription for iOS
-    locationSubscription = locationService.trackLocation().listen(
-          (position) {
-        if (!isTracking || !mounted) return;
+    // Subscribe to location updates
+    locationSubscription = locationService.trackLocation().listen((position) {
+      if (!isTracking) return;
 
-        print('New position: ${position.latitude}, ${position.longitude}, accuracy: ${position.accuracy}m, speed: ${position.speed}m/s');
+      // Update auto-pause logic
+      final speed = position.speed.clamp(0.0, double.infinity);
+      _handleAutoPauseLogic(speed);
 
-        // Only use location updates with good accuracy for iOS
-        if (position.accuracy > 20) {
-          print('Skipping low accuracy position update');
-          return;
-        }
-
-        // Update auto-pause logic
-        final speed = position.speed.clamp(0.0, double.infinity);
-        _handleAutoPauseLogic(speed);
-
-        // Calculate distance if not auto-paused
-        if (lastRecordedLocation != null && !autoPaused) {
-          final newDistance = calculateDistance(
-            lastRecordedLocation!.latitude,
-            lastRecordedLocation!.longitude,
-            position.latitude,
-            position.longitude,
-          );
-
-          // Only update if the change is reasonable (avoid GPS jumps)
-          if (newDistance > 1.0 && newDistance < 50.0) {
-            setState(() {
-              distanceCovered += newDistance;
-              print('Distance updated: $distanceCovered meters');
-              lastRecordedLocation = LatLng(position.latitude, position.longitude);
-            });
-          }
-        } else if (lastRecordedLocation == null) {
-          lastRecordedLocation = LatLng(position.latitude, position.longitude);
-        }
-
-        // Update route points and current location
-        setState(() {
-          currentLocation = position;
-          final newPoint = LatLng(position.latitude, position.longitude);
-          routePoints.add(newPoint);
-          routePolyline = routePolyline.copyWith(pointsParam: routePoints);
-        });
-
-        // Animate the map camera with padding for better visibility
-        mapController?.animateCamera(
-          CameraUpdate.newCameraPosition(
-            CameraPosition(
-              target: LatLng(position.latitude, position.longitude),
-              zoom: 16,
-            ),
-          ),
+      // Calculate distance if not auto-paused
+      if (lastRecordedLocation != null && !autoPaused) {
+        final newDistance = calculateDistance(
+          lastRecordedLocation!.latitude,
+          lastRecordedLocation!.longitude,
+          position.latitude,
+          position.longitude,
         );
-      },
-      onError: (error) {
-        print('Location stream error: $error');
-      },
-    );
+        if (newDistance > 20.0) {
+          setState(() {
+            distanceCovered += newDistance;
+            lastRecordedLocation = LatLng(position.latitude, position.longitude);
+          });
+        }
+      }
+
+      // Update route points and current location
+      setState(() {
+        currentLocation = position;
+        final newPoint = LatLng(position.latitude, position.longitude);
+        routePoints.add(newPoint);
+        routePolyline = routePolyline.copyWith(pointsParam: routePoints);
+      });
+
+      // Optionally animate the map camera
+      mapController?.animateCamera(
+        CameraUpdate.newLatLng(LatLng(position.latitude, position.longitude)),
+      );
+    });
   }
 
   /// Stop the run and cancel timers/subscriptions.
@@ -144,7 +113,7 @@ mixin RunTrackingMixin<T extends StatefulWidget> on State<T> {
     final dLng = (endLng - startLng) * (pi / 180);
     final a = sin(dLat / 2) * sin(dLat / 2) +
         cos(startLat * (pi / 180)) * cos(endLat * (pi / 180)) *
-        sin(dLng / 2) * sin(dLng / 2);
+            sin(dLng / 2) * sin(dLng / 2);
     final c = 2 * atan2(sqrt(a), sqrt(1 - a));
     return earthRadius * c;
   }
