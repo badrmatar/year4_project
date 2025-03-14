@@ -13,12 +13,11 @@ import '../models/user.dart';
 import '../mixins/run_tracking_mixin.dart';
 import '../services/ios_location_bridge.dart';
 import '../constants/app_constants.dart';
+import '../services/analytics_service.dart'; // Added analytics import
 
 /// A page that displays and tracks a duo run with two participants.
-///
 /// This page shows both the user's and their partner's location in real-time,
-/// tracks the distance between them, and ends the run if they exceed the
-/// maximum allowed distance.
+/// tracks the distance between them, and ends the run if they exceed the maximum allowed distance.
 class DuoActiveRunPage extends StatefulWidget {
   /// The challenge ID this duo run is associated with.
   final int challengeId;
@@ -87,7 +86,6 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
         setState(() {
           currentLocation = position;
         });
-
         _updateDuoWaitingRoom(position);
         _addSelfCircle(position);
       }
@@ -103,7 +101,6 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
 
       // If we have a previous location, calculate distance
       if (lastRecordedLocation != null) {
-        // Calculate distance using the mixin's method
         final segmentDistance = calculateDistance(
           lastRecordedLocation!.latitude,
           lastRecordedLocation!.longitude,
@@ -125,13 +122,14 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
             stillCounter++;
             if (stillCounter >= 5) {
               setState(() => autoPaused = true);
+              // Tracking auto-pause in duo run
+              AnalyticsService().client.trackRunPaused(true);
             }
           } else {
             stillCounter = 0;
           }
         }
 
-        // Update distance only if not paused and segmentDistance > 17 meters
         if (!autoPaused && segmentDistance > 17) {
           setState(() {
             distanceCovered += segmentDistance;
@@ -139,7 +137,6 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
           });
         }
       } else {
-        // First location update: initialize lastRecordedLocation
         setState(() {
           lastRecordedLocation = currentPoint;
         });
@@ -157,14 +154,10 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
         );
       });
 
-      // Update duo waiting room with new location
       _updateDuoWaitingRoom(position);
-
-      // Move camera to follow user
       mapController?.animateCamera(CameraUpdate.newLatLng(currentPoint));
     });
   }
-
 
   /// Starts polling for partner's status at regular intervals.
   void _startPartnerPolling() {
@@ -190,10 +183,8 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
   }
 
   /// Helper method to add or update the self circle on the map.
-  /// Not used since we're relying on the default Google Maps blue dot.
   void _addSelfCircle(Position position) {
-    // We're not adding a custom circle for self anymore
-    // We'll rely on the default blue location dot from Google Maps
+    // Not adding custom circle for self, rely on default blue dot.
   }
 
   /// Adds or updates the partner's circle on the map and adds to their route.
@@ -202,16 +193,14 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
     final circle = Circle(
       circleId: circleId,
       center: LatLng(position.latitude, position.longitude),
-      radius: 15, // Larger radius similar to the default Google Maps blue dot
-      fillColor: Colors.green.withOpacity(0.5), // Translucent green
-      strokeColor: Colors.white, // White border
+      radius: 15,
+      fillColor: Colors.green.withOpacity(0.5),
+      strokeColor: Colors.white,
       strokeWidth: 2,
     );
 
     setState(() {
       _circles[circleId] = circle;
-
-      // Add the partner's position to their route
       final partnerPoint = LatLng(position.latitude, position.longitude);
       if (_partnerRoutePoints.isEmpty ||
           _partnerRoutePoints.last != partnerPoint) {
@@ -249,10 +238,6 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
   }
 
   /// Polls for the partner's current location and updates the UI.
-  ///
-  /// This method fetches the partner's location from the database,
-  /// updates their marker on the map, and checks if the maximum
-  /// distance between partners has been exceeded.
   Future<void> _pollPartnerStatus() async {
     if (currentLocation == null || !mounted) return;
     try {
@@ -268,6 +253,10 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
         final data = results.first as Map<String, dynamic>;
         // If partner ended run, end our run
         if (data['has_ended'] == true) {
+          // Track run end due to partner action
+          await AnalyticsService().client.trackEvent('run_ended_due_to_partner', {
+            'challenge_id': widget.challengeId,
+          });
           await _endRunDueToPartner();
           return;
         }
@@ -295,7 +284,6 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
           headingAccuracy: 0.0,
         );
 
-        // Add partner circle
         _addPartnerCircle(partnerPosition);
 
         setState(() {
@@ -309,6 +297,10 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
           }).match({
             'team_challenge_id': widget.challengeId,
             'user_id': user.id,
+          });
+          // Track run end due to max distance exceeded
+          await AnalyticsService().client.trackEvent('run_ended_due_to_max_distance', {
+            'challenge_id': widget.challengeId,
           });
           await _handleMaxDistanceExceeded();
           return;
@@ -343,6 +335,8 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
 
         // Start tracking using the mixin
         startRun(initialPosition);
+        // Track run started event for duo run
+        await AnalyticsService().client.trackRunStarted('duo', widget.challengeId);
 
         // Add custom location handling to properly update distance
         _setupCustomLocationHandling();
@@ -370,32 +364,14 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
       notifyPartner: false,
       message: "Distance between teammates exceeded 500m. The run has ended.",
     );
-
-    if (mounted) {
-      await showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) {
-          return AlertDialog(
-            title: const Text('Run Ended'),
-            content: const Text(
-                'Distance between teammates exceeded 500m. The run has ended.'),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                },
-                child: const Text('OK'),
-              ),
-            ],
-          );
-        },
-      );
-    }
   }
 
   /// Manually ends the run when the user presses the end button.
   Future<void> _endRunManually() async {
+    // Track manual end run event
+    await AnalyticsService().client.trackEvent('run_ended_manually', {
+      'challenge_id': widget.challengeId,
+    });
     await _endRun(
       reason: 'manual',
       notifyPartner: true,
@@ -404,15 +380,6 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
   }
 
   /// Ends the run and saves all run data.
-  ///
-  /// This method handles the common logic for ending a run regardless
-  /// of the reason (manual end, partner ended, or maximum distance exceeded).
-  /// It cancels all subscriptions, saves the run data, and updates the UI.
-  ///
-  /// Parameters:
-  /// - reason: A string describing why the run ended (for logging)
-  /// - notifyPartner: Whether to notify the partner that the run has ended
-  /// - message: The message to show to the user
   Future<void> _endRun({
     required String reason,
     bool notifyPartner = false,
@@ -442,6 +409,13 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
       // Save the run data
       await _saveRunData();
 
+      // Track run completed event
+      await AnalyticsService().client.trackRunCompleted(
+        'duo',
+        distanceCovered / 1000,
+        secondsElapsed,
+      );
+
       // Update database records
       final updatePromises = [
         supabase.from('user_contributions').update({
@@ -454,12 +428,12 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
 
       if (notifyPartner) {
         updatePromises.add(
-            supabase.from('duo_waiting_room').update({
-              'has_ended': true,
-            }).match({
-              'team_challenge_id': widget.challengeId,
-              'user_id': user.id,
-            })
+          supabase.from('duo_waiting_room').update({
+            'has_ended': true,
+          }).match({
+            'team_challenge_id': widget.challengeId,
+            'user_id': user.id,
+          }),
         );
       }
 
@@ -536,12 +510,7 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
         throw Exception("Failed to save run: ${response.body}");
       }
     } catch (e) {
-      debugPrint('Error saving run data: $e. Challenge ID: ${widget.challengeId}');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("An error occurred: ${e.toString()}")),
-        );
-      }
+      throw Exception("An error occurred: ${e.toString()}");
     }
   }
 
@@ -609,9 +578,7 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
                 ),
               ),
               const SizedBox(height: 20),
-              CircularProgressIndicator(
-                color: currentLocation != null ? Colors.green : Colors.white,
-              ),
+              CircularProgressIndicator(),
               if (currentLocation != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 16.0),
@@ -649,8 +616,9 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
             : const LatLng(37.4219999, -122.0840575),
         zoom: 16,
       ),
-      myLocationEnabled: true, // Show default blue dot
+      myLocationEnabled: true,
       myLocationButtonEnabled: true,
+      zoomControlsEnabled: false,
       polylines: {routePolyline, _partnerRoutePolyline},
       circles: Set<Circle>.of(_circles.values),
       onMapCreated: (controller) => mapController = controller,
@@ -747,6 +715,29 @@ class _DuoActiveRunPageState extends State<DuoActiveRunPage>
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildStatItem(String label, String value) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.grey[600],
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
     );
   }
 }

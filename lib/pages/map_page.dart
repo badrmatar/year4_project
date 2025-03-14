@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
+import '../services/analytics_service.dart'; // Analytics import
 
 class CurrentLocationMapPage extends StatefulWidget {
   @override
@@ -15,6 +16,7 @@ class _CurrentLocationMapPageState extends State<CurrentLocationMapPage> {
   @override
   void initState() {
     super.initState();
+    AnalyticsService().client.trackEvent('map_page_viewed'); // Track page view event
     _getCurrentLocation();
   }
 
@@ -26,18 +28,16 @@ class _CurrentLocationMapPageState extends State<CurrentLocationMapPage> {
         _isLoading = false;
       });
     } else {
-      // Handle location null scenario - permissions denied or service off
       setState(() {
         _isLoading = false;
       });
-      // You could show a dialog or fall back to a default location here.
+      // Optionally show a dialog or default location
     }
   }
 
   Future<Position?> _determinePosition() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      // Location services are not enabled. You could request them to enable it.
       return null;
     }
 
@@ -45,17 +45,14 @@ class _CurrentLocationMapPageState extends State<CurrentLocationMapPage> {
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
-        // User denied permission.
         return null;
       }
     }
 
     if (permission == LocationPermission.deniedForever) {
-      // Permissions are permanently denied.
       return null;
     }
 
-    // Permissions granted and services enabled, get the position.
     return await Geolocator.getCurrentPosition(
       desiredAccuracy: LocationAccuracy.high,
     );
@@ -96,7 +93,6 @@ class _CurrentLocationMapPageState extends State<CurrentLocationMapPage> {
               myLocationButtonEnabled: true,
             ),
           ),
-          // Display the saved location variables
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: Text(

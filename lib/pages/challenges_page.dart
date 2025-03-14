@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/challenge.dart';
 import '../models/user.dart';
 import '../widgets/challenge_card.dart';
+import '../services/analytics_service.dart'; // 1) Import Analytics
 
 class ChallengesPage extends StatefulWidget {
   const ChallengesPage({Key? key}) : super(key: key);
@@ -52,7 +53,7 @@ class _ChallengesPageState extends State<ChallengesPage> {
           .lt('start_time', endOfDay.toIso8601String());
       final List challengesList = challengesResponse as List;
 
-      // Fetch the user's active team membership with joined team details.
+      // Fetch the user's active team membership.
       final teamMembershipResponse = await supabase
           .from('team_memberships')
           .select('team_id')
@@ -60,6 +61,7 @@ class _ChallengesPageState extends State<ChallengesPage> {
           .filter('date_left', 'is', null)
           .limit(1)
           .maybeSingle();
+
       if (teamMembershipResponse == null) {
         throw Exception('No active team membership found');
       }
@@ -73,6 +75,7 @@ class _ChallengesPageState extends State<ChallengesPage> {
           .eq('team_id', teamId)
           .eq('iscompleted', false)
           .order('team_challenge_id', ascending: false);
+
       final List activeTeamChallengesList = activeTeamChallengesResponse as List;
 
       // Calculate total and duo distances.
@@ -99,9 +102,9 @@ class _ChallengesPageState extends State<ChallengesPage> {
       dynamic activeTeamChallenge;
       if (teamChallengesWithDistance.isNotEmpty) {
         activeTeamChallenge = teamChallengesWithDistance.first;
-        // If the challenge_id of the active challenge is not in today's challenges, then consider it stale.
-        bool isTodayChallenge = challengesList.any((c) =>
-        c['challenge_id'] == activeTeamChallenge['challenge_id']);
+        final bool isTodayChallenge = challengesList.any(
+              (c) => c['challenge_id'] == activeTeamChallenge['challenge_id'],
+        );
         if (!isTodayChallenge) {
           activeTeamChallenge = null;
         }
@@ -118,8 +121,17 @@ class _ChallengesPageState extends State<ChallengesPage> {
   }
 
   Future<void> _handleChallengeAction(
-      Challenge challenge, dynamic activeTeamChallenge, BuildContext context) async {
+      Challenge challenge,
+      dynamic activeTeamChallenge,
+      BuildContext context,
+      ) async {
+    // 2) Track user picking a challenge
     if (activeTeamChallenge != null) {
+      // If user continues an existing challenge
+      AnalyticsService().client.trackEvent('challenge_continue', {
+        'challenge_id': challenge.challengeId,
+      });
+
       Navigator.pushNamed(
         context,
         '/journey_type',
@@ -130,13 +142,29 @@ class _ChallengesPageState extends State<ChallengesPage> {
       );
       return;
     }
+
+    // Otherwise, user attempts to assign a new challenge
+    AnalyticsService().client.trackEvent('challenge_assign_attempt', {
+      'challenge_id': challenge.challengeId,
+    });
+
     final success = await _assignChallengeToTeam(challenge.challengeId, context);
     if (success) {
+      // 3) Challenge assigned successfully
+      AnalyticsService().client.trackEvent('challenge_assign_success', {
+        'challenge_id': challenge.challengeId,
+      });
+
       Navigator.pushNamed(
         context,
         '/journey_type',
         arguments: {'challenge_id': challenge.challengeId},
       );
+    } else {
+      // 4) Challenge assignment failed
+      AnalyticsService().client.trackEvent('challenge_assign_fail', {
+        'challenge_id': challenge.challengeId,
+      });
     }
   }
 

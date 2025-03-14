@@ -1,10 +1,10 @@
-// lib/pages/history_page.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/user.dart';
 import '../services/history_service.dart';
 import '../widgets/team_challenge_item.dart';
 import '../widgets/personal_contribution_item.dart';
+import '../services/analytics_service.dart'; // <-- Added analytics import
 
 class HistoryPage extends StatefulWidget {
   const HistoryPage({Key? key}) : super(key: key);
@@ -22,6 +22,9 @@ class _HistoryPageState extends State<HistoryPage> {
   @override
   void initState() {
     super.initState();
+    // Track that the user opened the history page.
+    AnalyticsService().client.trackEvent('history_page_opened');
+
     _fetchHistoryData();
   }
 

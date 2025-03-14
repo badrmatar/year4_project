@@ -1,5 +1,5 @@
-// lib/pages/journey_type_page.dart
 import 'package:flutter/material.dart';
+import '../services/analytics_service.dart';
 
 class JourneyTypePage extends StatelessWidget {
   const JourneyTypePage({Key? key}) : super(key: key);
@@ -10,10 +10,10 @@ class JourneyTypePage extends StatelessWidget {
     // We expect a 'challenge_id' and optionally a 'team_challenge_id' for duo runs.
     final args = ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>;
     final challengeId = args['challenge_id'] as int;
-    // For duo runs, if a valid team_challenge_id is provided, use it; otherwise, you might want to handle that case.
+    // For duo runs, if a valid team_challenge_id is provided, use it; otherwise, use challengeId.
     final teamChallengeId = args.containsKey('team_challenge_id')
         ? args['team_challenge_id'] as int
-        : challengeId; // Fallback: using challengeId (adjust this logic if needed)
+        : challengeId;
 
     return Scaffold(
       appBar: AppBar(
@@ -109,8 +109,9 @@ class JourneyTypePage extends StatelessWidget {
     );
   }
 
-  void _handleSoloRun(BuildContext context, int challengeId) {
-    // For solo runs, we pass the challenge id.
+  Future<void> _handleSoloRun(BuildContext context, int challengeId) async {
+    // Track the challenge selection event for a solo run.
+    await AnalyticsService().client.trackChallengeSelected(challengeId, 'solo', 0.0);
     Navigator.pushReplacementNamed(
       context,
       '/run_loading',
@@ -121,8 +122,9 @@ class JourneyTypePage extends StatelessWidget {
     );
   }
 
-  void _handleDuoRun(BuildContext context, int teamChallengeId) {
-    // For duo runs, we pass the valid team challenge id.
+  Future<void> _handleDuoRun(BuildContext context, int teamChallengeId) async {
+    // Track the challenge selection event for a duo run.
+    await AnalyticsService().client.trackChallengeSelected(teamChallengeId, 'duo', 0.0);
     Navigator.pushReplacementNamed(
       context,
       '/duo_waiting_room',

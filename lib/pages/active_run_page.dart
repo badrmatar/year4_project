@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/user.dart';
 import '../services/location_service.dart';
+import '../services/analytics_service.dart'; // Analytics import
 
 class ActiveRunPage extends StatefulWidget {
   final Position initialPosition;
@@ -65,6 +66,7 @@ class ActiveRunPageState extends State<ActiveRunPage> {
   // Last recorded location
   LatLng? _lastRecordedLocation;
   final Map<MarkerId, Marker> _markers = {};
+
   @override
   void initState() {
     super.initState();
@@ -74,8 +76,8 @@ class ActiveRunPageState extends State<ActiveRunPage> {
   Future<void> _initializeRun() async {
     // Start with initial position
     _addRoutePoint(LatLng(
-        widget.initialPosition.latitude,
-        widget.initialPosition.longitude
+      widget.initialPosition.latitude,
+      widget.initialPosition.longitude,
     ));
 
     // Start run timer
@@ -97,8 +99,8 @@ class ActiveRunPageState extends State<ActiveRunPage> {
     setState(() {
       _isTracking = true;
       _lastRecordedLocation = LatLng(
-          widget.initialPosition.latitude,
-          widget.initialPosition.longitude
+        widget.initialPosition.latitude,
+        widget.initialPosition.longitude,
       );
     });
   }
@@ -111,16 +113,17 @@ class ActiveRunPageState extends State<ActiveRunPage> {
     );
 
     // Subscribe to location updates
-    _locationSubscription = Geolocator.getPositionStream(
-        locationSettings: locationSettings
-    ).listen(_handleNewLocation);
+    _locationSubscription =
+        Geolocator.getPositionStream(locationSettings: locationSettings)
+            .listen(_handleNewLocation);
   }
 
   void _handleNewLocation(Position position) {
     if (!_isTracking || _manuallyPaused) return;
 
     // Get current point
-    final currentPoint = LatLng(position.latitude, position.longitude);
+    final currentPoint =
+    LatLng(position.latitude, position.longitude);
 
     // Check if we have a previous recorded location
     if (_lastRecordedLocation != null) {
@@ -135,7 +138,7 @@ class ActiveRunPageState extends State<ActiveRunPage> {
       // Adjust speed from position
       final speed = position.speed >= 0 ? position.speed : 0.0;
 
-      // Handle auto-pause/resume logic
+      // Handle auto-pause/resume logic (with analytics)
       _handleAutoPauseLogic(speed);
 
       // Only add to total distance if not paused AND segment distance exceeds 17 meters
@@ -161,11 +164,9 @@ class ActiveRunPageState extends State<ActiveRunPage> {
     _animateToUser(position);
   }
 
-
   void _addRoutePoint(LatLng point) {
     setState(() {
       _routePoints.add(point);
-
       _polylines = {
         Polyline(
           polylineId: const PolylineId('route'),
@@ -179,7 +180,7 @@ class ActiveRunPageState extends State<ActiveRunPage> {
 
   void _animateToUser(Position position) {
     _mapController?.animateCamera(
-        CameraUpdate.newLatLng(LatLng(position.latitude, position.longitude))
+      CameraUpdate.newLatLng(LatLng(position.latitude, position.longitude)),
     );
   }
 
@@ -193,6 +194,8 @@ class ActiveRunPageState extends State<ActiveRunPage> {
           _autoPaused = false;
           _stillCount = 0;
         });
+        // Track auto-resume event (true indicates auto)
+        AnalyticsService().client.trackRunResumed(true);
       }
     } else {
       // Currently running - check if we should pause
@@ -202,6 +205,8 @@ class ActiveRunPageState extends State<ActiveRunPage> {
           setState(() {
             _autoPaused = true;
           });
+          // Track auto-pause event (true indicates auto)
+          AnalyticsService().client.trackRunPaused(true);
         }
       } else {
         _stillCount = 0;
@@ -214,10 +219,9 @@ class ActiveRunPageState extends State<ActiveRunPage> {
     final double dLat = _degreesToRadians(lat2 - lat1);
     final double dLon = _degreesToRadians(lon2 - lon1);
 
-    final double a =
-        sin(dLat / 2) * sin(dLat / 2) +
-            cos(_degreesToRadians(lat1)) * cos(_degreesToRadians(lat2)) *
-                sin(dLon / 2) * sin(dLon / 2);
+    final double a = sin(dLat / 2) * sin(dLat / 2) +
+        cos(_degreesToRadians(lat1)) * cos(_degreesToRadians(lat2)) *
+            sin(dLon / 2) * sin(dLon / 2);
 
     final double c = 2 * atan2(sqrt(a), sqrt(1 - a));
     return earthRadius * c;
@@ -228,9 +232,7 @@ class ActiveRunPageState extends State<ActiveRunPage> {
   }
 
   void _updateCaloriesBurned() {
-    // Very simple calories burned estimation
-    // Assumes 60 calories per km on average
-    // This could be improved with user weight, pace, etc.
+    // Very simple calories burned estimation: assumes 60 calories per km
     final distanceKm = _distanceCovered / 1000;
     final calories = (distanceKm * 60).round();
 
@@ -243,6 +245,12 @@ class ActiveRunPageState extends State<ActiveRunPage> {
     setState(() {
       _manuallyPaused = !_manuallyPaused;
     });
+    // Track manual pause/resume: false indicates manual action.
+    if (_manuallyPaused) {
+      AnalyticsService().client.trackRunPaused(false);
+    } else {
+      AnalyticsService().client.trackRunResumed(false);
+    }
   }
 
   Future<void> _endRunAndSave() async {
@@ -285,16 +293,21 @@ class ActiveRunPageState extends State<ActiveRunPage> {
     try {
       await _saveRunData();
 
+      // Track run_completed event before navigating away
+      await AnalyticsService().client.trackRunCompleted(
+        widget.journeyType,
+        _distanceCovered / 1000, // Convert meters to km
+        _secondsElapsed,
+      );
+
       // Pop the loading dialog
       if (mounted) Navigator.of(context).pop();
 
       // Navigate directly to challenges page after saving
       Navigator.of(context).pushReplacementNamed('/challenges');
     } catch (e) {
-      // Pop the loading dialog
       if (mounted) Navigator.of(context).pop();
 
-      // Show error
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Error saving run: ${e.toString()}")),
@@ -369,7 +382,6 @@ class ActiveRunPageState extends State<ActiveRunPage> {
   void _showRunSummary() {
     if (_runSummary == null) return;
 
-    // Format duration
     final duration = Duration(seconds: _secondsElapsed);
     final hours = duration.inHours;
     final minutes = duration.inMinutes % 60;
@@ -378,15 +390,12 @@ class ActiveRunPageState extends State<ActiveRunPage> {
         ? '$hours:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}'
         : '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
 
-    // Format pace
     final paceMinutes = _averagePace.floor();
     final paceSeconds = ((_averagePace - paceMinutes) * 60).round();
     final paceText = '$paceMinutes:${paceSeconds.toString().padLeft(2, '0')} min/km';
 
-    // Format distance
     final distanceText = '${(_runSummary!['distanceKm'] as double).toStringAsFixed(2)} km';
 
-    // Show modal
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -402,7 +411,6 @@ class ActiveRunPageState extends State<ActiveRunPage> {
         ),
         child: Column(
           children: [
-            // Header
             Container(
               padding: const EdgeInsets.all(16),
               decoration: const BoxDecoration(
@@ -437,8 +445,6 @@ class ActiveRunPageState extends State<ActiveRunPage> {
                 ],
               ),
             ),
-
-            // Stats
             Expanded(
               child: SingleChildScrollView(
                 child: Padding(
@@ -446,7 +452,6 @@ class ActiveRunPageState extends State<ActiveRunPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Map preview of the run (if mapController is available)
                       if (_mapController != null)
                         Container(
                           height: 200,
@@ -458,8 +463,8 @@ class ActiveRunPageState extends State<ActiveRunPage> {
                                 target: _routePoints.isNotEmpty
                                     ? _routePoints[_routePoints.length ~/ 2]
                                     : LatLng(
-                                    widget.initialPosition.latitude,
-                                    widget.initialPosition.longitude
+                                  widget.initialPosition.latitude,
+                                  widget.initialPosition.longitude,
                                 ),
                                 zoom: 15,
                               ),
@@ -471,8 +476,6 @@ class ActiveRunPageState extends State<ActiveRunPage> {
                             ),
                           ),
                         ),
-
-                      // Primary stats grid
                       GridView.count(
                         crossAxisCount: 2,
                         mainAxisSpacing: 15,
@@ -487,17 +490,12 @@ class ActiveRunPageState extends State<ActiveRunPage> {
                           _buildStatCard('Calories', '${_caloriesBurned} kcal', Icons.local_fire_department),
                         ],
                       ),
-
                       const SizedBox(height: 20),
-
-                      // Challenge progress
                       const Text(
                         'Challenge Progress',
                         style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                       ),
-
                       const SizedBox(height: 10),
-
                       LinearProgressIndicator(
                         value: _runSummary!['teamProgress'] / _runSummary!['requiredDistance'],
                         minHeight: 20,
@@ -505,21 +503,16 @@ class ActiveRunPageState extends State<ActiveRunPage> {
                         valueColor: AlwaysStoppedAnimation<Color>(_runSummary!['completed'] ? Colors.green : Colors.blue),
                         borderRadius: BorderRadius.circular(10),
                       ),
-
                       const SizedBox(height: 5),
-
                       Text(
                         '${(_runSummary!["teamProgress"] as double).toStringAsFixed(2)}/${_runSummary!["requiredDistance"].toStringAsFixed(2)} km',
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
-
                       const SizedBox(height: 20),
-
-                      // Call to action
                       Center(
                         child: ElevatedButton(
                           onPressed: () {
-                            Navigator.of(context).pop(); // Close summary
+                            Navigator.of(context).pop();
                             Navigator.of(context).pushReplacementNamed('/challenges');
                           },
                           style: ElevatedButton.styleFrom(
@@ -617,7 +610,6 @@ class ActiveRunPageState extends State<ActiveRunPage> {
             markers: Set<Marker>.of(_markers.values),
             onMapCreated: (controller) => _mapController = controller,
           ),
-
           // Status bar background (for readability)
           Positioned(
             top: 0,
@@ -628,7 +620,6 @@ class ActiveRunPageState extends State<ActiveRunPage> {
               color: Colors.black.withOpacity(0.5),
             ),
           ),
-
           // App bar with back button
           Positioned(
             top: MediaQuery.of(context).padding.top,
@@ -687,7 +678,6 @@ class ActiveRunPageState extends State<ActiveRunPage> {
               ),
             ),
           ),
-
           // Stats panel at the bottom
           Positioned(
             bottom: 0,
@@ -729,7 +719,6 @@ class ActiveRunPageState extends State<ActiveRunPage> {
                         ),
                       ),
                     ),
-
                   // Primary stats
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -741,9 +730,7 @@ class ActiveRunPageState extends State<ActiveRunPage> {
                           : '--:--'),
                     ],
                   ),
-
                   const SizedBox(height: 16),
-
                   // End run button
                   SizedBox(
                     width: double.infinity,

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import '../services/location_service.dart';
 import 'active_run_page.dart';
+import '../services/analytics_service.dart'; // Added analytics import
 
 class RunLoadingPage extends StatefulWidget {
   final String journeyType;
@@ -136,19 +137,13 @@ class _RunLoadingPageState extends State<RunLoadingPage> {
     _locationService.positionStream.listen((position) {
       if (!mounted) return;
 
-      // Log position updates to verify we're receiving them
       print('Position update: lat=${position.latitude}, lng=${position.longitude}, acc=${position.accuracy}m');
 
-      // Always update the displayed position and evaluate if it's better
       setState(() {
-        // Check if this is a better position than what we have
         if (_bestPosition == null || position.accuracy < _bestPosition!.accuracy) {
           _bestPosition = position;
-
-          // Log that we found a better position
           print('New best position! Accuracy: ${position.accuracy}m');
 
-          // Update UI message based on accuracy
           if (position.accuracy < GOOD_ACCURACY) {
             _isWaitingForSignal = false;
             _hasGoodSignal = true;
@@ -160,17 +155,13 @@ class _RunLoadingPageState extends State<RunLoadingPage> {
           }
         }
 
-        // Even if it's not the best position, we should still reflect the current position
-        // in the UI for feedback purposes
         if (_bestPosition != null) {
-          // Display auto-start information if time threshold is met
           if (_elapsedSeconds >= AUTO_START_SECONDS && _bestPosition!.accuracy <= ACCEPTABLE_ACCURACY) {
             _statusMessage = "Auto-starting with accuracy: ${_bestPosition!.accuracy.toStringAsFixed(1)}m";
           }
         }
       });
 
-      // Auto-start check if we've hit the time threshold and have acceptable accuracy
       if (_elapsedSeconds >= AUTO_START_SECONDS &&
           _bestPosition != null &&
           _bestPosition!.accuracy <= ACCEPTABLE_ACCURACY) {
@@ -184,12 +175,15 @@ class _RunLoadingPageState extends State<RunLoadingPage> {
     });
   }
 
-  void _startRun() {
+  void _startRun() async {
     if (_bestPosition == null) return;
 
     // Cancel timers to prevent further callbacks
     _elapsedTimer?.cancel();
     _autoStartTimer?.cancel();
+
+    // Track the run_started event with journey type and challenge id using PostHog
+    await AnalyticsService().client.trackRunStarted(widget.journeyType, widget.challengeId);
 
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
@@ -204,12 +198,9 @@ class _RunLoadingPageState extends State<RunLoadingPage> {
 
   @override
   void dispose() {
-    // Make sure to clean up all resources
     _locationService.stopQualityMonitoring();
     _elapsedTimer?.cancel();
     _autoStartTimer?.cancel();
-
-    // Debug log to confirm resource cleanup
     print('RunLoadingPage disposed, all resources cleaned up');
     super.dispose();
   }
@@ -257,7 +248,7 @@ class _RunLoadingPageState extends State<RunLoadingPage> {
                     const SizedBox(height: 16),
                     Text(
                       _elapsedSeconds.toString() + "s",
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
@@ -337,7 +328,6 @@ class _RunLoadingPageState extends State<RunLoadingPage> {
                     fontSize: 14,
                   ),
                 ),
-              // Accuracy improvement indicator that shows if GPS is getting better
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 10.0),
                 child: Column(
@@ -354,7 +344,6 @@ class _RunLoadingPageState extends State<RunLoadingPage> {
                       ),
                       textAlign: TextAlign.center,
                     ),
-
                     if (_elapsedSeconds < AUTO_START_SECONDS)
                       Padding(
                         padding: const EdgeInsets.only(top: 8.0),
@@ -363,7 +352,6 @@ class _RunLoadingPageState extends State<RunLoadingPage> {
                           style: const TextStyle(color: Colors.amber, fontSize: 14),
                         ),
                       ),
-
                     if (_elapsedSeconds >= AUTO_START_SECONDS && _bestPosition!.accuracy > ACCEPTABLE_ACCURACY)
                       Padding(
                         padding: const EdgeInsets.only(top: 8.0),
@@ -375,8 +363,6 @@ class _RunLoadingPageState extends State<RunLoadingPage> {
                   ],
                 ),
               ),
-
-              // Progress indicator showing continuous efforts to improve GPS
               if (_elapsedSeconds >= AUTO_START_SECONDS && _bestPosition!.accuracy > ACCEPTABLE_ACCURACY)
                 Container(
                   width: 200,
@@ -387,7 +373,7 @@ class _RunLoadingPageState extends State<RunLoadingPage> {
                     borderRadius: BorderRadius.circular(2),
                   ),
                   child: LinearProgressIndicator(
-                    value: _elapsedSeconds % 3 / 3, // Creates a cycling progress effect
+                    value: _elapsedSeconds % 3 / 3,
                     backgroundColor: Colors.transparent,
                     valueColor: AlwaysStoppedAnimation<Color>(Colors.orange),
                   ),
