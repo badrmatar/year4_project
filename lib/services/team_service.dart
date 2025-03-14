@@ -2,20 +2,26 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class TeamService {
+  // For dependency injection in testing
+  final SupabaseClient? _testClient;
+
+  // Constructor that allows for dependency injection
+  TeamService({SupabaseClient? testClient}) : _testClient = testClient;
+
+  // Get the appropriate client (test client or real client)
+  SupabaseClient get _client => _testClient ?? Supabase.instance.client;
+
   /// Fetches the active team_id for a user, assuming there's only one active team
   /// (where `date_left` is null). Returns the team_id or null if none found.
   Future<int?> fetchUserTeamId(int userId) async {
-    final supabase = Supabase.instance.client;
-
     try {
       // Query the `team_memberships` table to find the user's active team (date_left IS NULL)
-      final response = await supabase
+      final response = await _client
           .from('team_memberships')
           .select('team_id')
           .eq('user_id', userId)
           .filter('date_left', 'is', null) // Use 'is' in raw filter
           .maybeSingle();
-
 
       // If no response is returned, return null
       if (response == null) {
@@ -33,16 +39,12 @@ class TeamService {
       print('Error fetching user team: $e');
       return null;
     }
-
-
   }
 
   // Fetch the league_id associated with a specific team_id
   Future<int?> fetchLeagueId(int teamId) async {
-    final supabase = Supabase.instance.client;
-
     try {
-      final response = await supabase
+      final response = await _client
           .from('teams')
           .select('league_id')
           .eq('id', teamId)
@@ -52,11 +54,14 @@ class TeamService {
         return null;
       }
 
-      return response['league_id'] as int?;
+      if (response is Map<String, dynamic>) {
+        return response['league_id'] as int?;
+      }
+
+      return null;
     } catch (e) {
       print('Error fetching league ID: $e');
       return null;
     }
   }
-
 }
