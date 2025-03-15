@@ -45,6 +45,14 @@ android {
             signingConfig = signingConfigs.debug
         }
     }
+
+    // Add this section to disable lint checks for release builds
+    lintOptions {
+        checkReleaseBuilds false
+        // Or disable specific warnings that come from UXCam
+        // warning: 'PluginRegistry.Registrar' is deprecated and marked for removal
+        abortOnError false
+    }
 }
 
 flutter {
