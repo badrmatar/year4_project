@@ -307,7 +307,7 @@ class UxcamRouteObserver extends NavigatorObserver {
 
       // Add a delay before tagging to allow screen to load completely
       // This should help UXCam capture the fully loaded screen
-      Future.delayed(const Duration(milliseconds: 500), () {
+      Future.delayed(const Duration(milliseconds: 1000), () {
         // Tag the screen in UXCam after delay
         FlutterUxcam.tagScreenName(tagName);
 

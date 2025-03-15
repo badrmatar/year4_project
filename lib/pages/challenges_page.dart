@@ -8,7 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/challenge.dart';
 import '../models/user.dart';
 import '../widgets/challenge_card.dart';
-import '../services/analytics_service.dart'; // 1) Import Analytics
+import '../services/analytics_service.dart';
 
 class ChallengesPage extends StatefulWidget {
   const ChallengesPage({Key? key}) : super(key: key);
@@ -68,51 +68,57 @@ class _ChallengesPageState extends State<ChallengesPage> {
       final Map teamMembershipData = teamMembershipResponse;
       final teamId = teamMembershipData['team_id'];
 
-      // Fetch the team's active challenges with user contributions.
-      final activeTeamChallengesResponse = await supabase
+      // Fetch ALL team challenges from today (active and completed)
+      final teamChallengesResponse = await supabase
           .from('team_challenges')
-          .select('*, user_contributions(distance_covered, journey_type)')
+          .select('*, challenges(start_time), user_contributions(distance_covered, journey_type)')
           .eq('team_id', teamId)
-          .eq('iscompleted', false)
           .order('team_challenge_id', ascending: false);
 
-      final List activeTeamChallengesList = activeTeamChallengesResponse as List;
+      final List allTeamChallengesList = teamChallengesResponse as List;
 
-      // Calculate total and duo distances.
-      final teamChallengesWithDistance = activeTeamChallengesList.map((tc) {
-        final contributions = tc['user_contributions'] as List;
-        final totalDistance = contributions.fold<double>(
-          0,
-              (sum, contrib) => sum + (contrib['distance_covered'] ?? 0),
-        );
-        final duoDistance = contributions
-            .where((contrib) => contrib['journey_type'] == 'duo')
-            .fold<double>(
-          0,
-              (sum, contrib) => sum + (contrib['distance_covered'] ?? 0),
-        );
-        return {
-          ...tc,
-          'total_distance': totalDistance,
-          'duo_distance': duoDistance,
-        };
+      // Filter for challenges from today
+      final currentDate = DateTime.now().toUtc();
+      final todayStart = DateTime.utc(currentDate.year, currentDate.month, currentDate.day);
+
+      final todaysTeamChallenges = allTeamChallengesList.where((tc) {
+        final challengeStartTime = tc['challenges'] != null ?
+        DateTime.parse(tc['challenges']['start_time']) : null;
+        if (challengeStartTime == null) return false;
+
+        return challengeStartTime.isAfter(todayStart) ||
+            (challengeStartTime.year == todayStart.year &&
+                challengeStartTime.month == todayStart.month &&
+                challengeStartTime.day == todayStart.day);
       }).toList();
 
-      // Check if the active team challenge belongs to one of today's challenges.
+      // Find active challenges (not completed)
+      final activeTeamChallenges = todaysTeamChallenges
+          .where((tc) => tc['iscompleted'] == false)
+          .toList();
+
+      // Find completed challenges from today
+      final completedTeamChallenges = todaysTeamChallenges
+          .where((tc) => tc['iscompleted'] == true)
+          .toList();
+
+      // Calculate total and duo distances for active challenges
       dynamic activeTeamChallenge;
-      if (teamChallengesWithDistance.isNotEmpty) {
-        activeTeamChallenge = teamChallengesWithDistance.first;
-        final bool isTodayChallenge = challengesList.any(
-              (c) => c['challenge_id'] == activeTeamChallenge['challenge_id'],
-        );
-        if (!isTodayChallenge) {
-          activeTeamChallenge = null;
-        }
+      if (activeTeamChallenges.isNotEmpty) {
+        activeTeamChallenge = _calculateDistances(activeTeamChallenges.first);
+      }
+
+      // Calculate total and duo distances for completed challenges
+      dynamic completedTeamChallenge;
+      if (completedTeamChallenges.isNotEmpty) {
+        completedTeamChallenge = _calculateDistances(completedTeamChallenges.first);
       }
 
       return {
         'challenges': challengesList,
         'activeTeamChallenge': activeTeamChallenge,
+        'completedTeamChallenge': completedTeamChallenge,
+        'hasChallengeToday': todaysTeamChallenges.isNotEmpty,
       };
     } catch (e) {
       debugPrint('Error fetching challenges and team status: $e');
@@ -120,14 +126,36 @@ class _ChallengesPageState extends State<ChallengesPage> {
     }
   }
 
+  // Helper method to calculate distances for a team challenge
+  dynamic _calculateDistances(dynamic teamChallenge) {
+    final contributions = teamChallenge['user_contributions'] as List? ?? [];
+    final totalDistance = contributions.fold<double>(
+      0,
+          (sum, contrib) => sum + (contrib['distance_covered'] ?? 0),
+    );
+    final duoDistance = contributions
+        .where((contrib) => contrib['journey_type'] == 'duo')
+        .fold<double>(
+      0,
+          (sum, contrib) => sum + (contrib['distance_covered'] ?? 0),
+    );
+    return {
+      ...teamChallenge,
+      'total_distance': totalDistance,
+      'duo_distance': duoDistance,
+    };
+  }
+
   Future<void> _handleChallengeAction(
       Challenge challenge,
       dynamic activeTeamChallenge,
+      dynamic completedTeamChallenge,
+      bool hasChallengeToday,
       BuildContext context,
       ) async {
-    // 2) Track user picking a challenge
+    // If there's an active challenge, continue with it
     if (activeTeamChallenge != null) {
-      // If user continues an existing challenge
+      // Track user picking a challenge
       AnalyticsService().client.trackEvent('challenge_continue', {
         'challenge_id': challenge.challengeId,
       });
@@ -143,6 +171,17 @@ class _ChallengesPageState extends State<ChallengesPage> {
       return;
     }
 
+    // If there's a completed challenge today, show message and return
+    if (completedTeamChallenge != null || hasChallengeToday) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Your team has already completed a challenge today. Only one challenge per day is allowed.'),
+          duration: Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
+
     // Otherwise, user attempts to assign a new challenge
     AnalyticsService().client.trackEvent('challenge_assign_attempt', {
       'challenge_id': challenge.challengeId,
@@ -150,7 +189,7 @@ class _ChallengesPageState extends State<ChallengesPage> {
 
     final success = await _assignChallengeToTeam(challenge.challengeId, context);
     if (success) {
-      // 3) Challenge assigned successfully
+      // Challenge assigned successfully
       AnalyticsService().client.trackEvent('challenge_assign_success', {
         'challenge_id': challenge.challengeId,
       });
@@ -161,7 +200,7 @@ class _ChallengesPageState extends State<ChallengesPage> {
         arguments: {'challenge_id': challenge.challengeId},
       );
     } else {
-      // 4) Challenge assignment failed
+      // Challenge assignment failed
       AnalyticsService().client.trackEvent('challenge_assign_fail', {
         'challenge_id': challenge.challengeId,
       });
@@ -246,6 +285,8 @@ class _ChallengesPageState extends State<ChallengesPage> {
               .map((item) => Challenge.fromJson(item))
               .toList();
           final activeTeamChallenge = data['activeTeamChallenge'];
+          final completedTeamChallenge = data['completedTeamChallenge'];
+          final hasChallengeToday = data['hasChallengeToday'] ?? false;
 
           return ListView.builder(
             itemCount: challenges.length,
@@ -254,7 +295,10 @@ class _ChallengesPageState extends State<ChallengesPage> {
               return ChallengeCard(
                 challenge: challenge,
                 activeTeamChallenge: activeTeamChallenge,
-                onPressed: _handleChallengeAction,
+                completedTeamChallenge: completedTeamChallenge,
+                hasChallengeToday: hasChallengeToday,
+                onPressed: (chal, active, completed, hasChallenge, ctx) =>
+                    _handleChallengeAction(chal, active, completed, hasChallenge, ctx),
               );
             },
           );
